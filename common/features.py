@@ -1,9 +1,9 @@
 """
-Technical indicator feature engineering.
+Technical indicator feature engineering and target construction.
 
-The indicators themselves are asset-agnostic — the same RSI/MACD logic applies
-to AAPL or BTC. Keeping this shared avoids drift between the bots' feature
-definitions, while each bot still owns its own model, data, and trade results.
+Indicators are asset-agnostic; the target (what we're predicting) is tuned
+per asset class. Stocks see smaller moves and zero commission, so a tight
+target works; crypto needs a larger threshold to clear fees.
 """
 import pandas as pd
 import numpy as np
@@ -17,7 +17,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     Add technical indicators to an OHLCV DataFrame.
 
     Expects columns: open, high, low, close, volume (lowercase).
-    Returns a copy with feature columns appended.
+    Returns a copy with feature columns appended (no target yet).
     """
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
@@ -46,7 +46,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     bb = BollingerBands(df["close"], window=20, window_dev=2)
     df["bb_high"] = bb.bollinger_hband()
     df["bb_low"] = bb.bollinger_lband()
-    df["bb_pct"] = bb.bollinger_pband()  # position within bands [0, 1]
+    df["bb_pct"] = bb.bollinger_pband()
 
     # ATR (volatility)
     df["atr_14"] = AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
@@ -55,9 +55,27 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df["volume_sma_20"] = df["volume"].rolling(20).mean()
     df["volume_ratio"] = df["volume"] / df["volume_sma_20"]
 
-    # Target: next-day return direction (1 = up, 0 = down)
-    df["target"] = (df["close"].shift(-1) > df["close"]).astype(int)
+    return df
 
+
+def add_target(df: pd.DataFrame, horizon: int, threshold: float) -> pd.DataFrame:
+    """
+    Add a binary target: 1 if the forward `horizon`-day return exceeds `threshold`.
+
+    Examples:
+      - Stocks: horizon=3, threshold=0.01  (predict +1% over 3 days)
+      - Crypto: horizon=5, threshold=0.02  (predict +2% over 5 days)
+
+    Larger threshold → fewer positive examples, but each one is a meaningful
+    move that can overcome trading friction. The target is forward-looking,
+    so future rows will be NaN; training will drop them.
+    """
+    df = df.copy()
+    forward_return = df["close"].shift(-horizon) / df["close"] - 1.0
+    df["target"] = (forward_return > threshold).astype(int)
+    # Mark the last `horizon` rows as NaN so they don't enter training
+    df.loc[df.index[-horizon:], "target"] = np.nan
+    df["forward_return"] = forward_return
     return df
 
 

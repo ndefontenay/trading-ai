@@ -8,7 +8,7 @@ from loguru import logger
 
 from common.training import train_symbol
 from common.backtest import backtest_symbol
-from crypto.data.fetcher import DEFAULT_PAIRS, load_pair
+from crypto.data.fetcher import DEFAULT_PAIRS, load_pair, TARGET_HORIZON
 
 MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results", "crypto", "models")
 REPORT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results", "crypto", "reports")
@@ -26,7 +26,7 @@ def train_all(pairs: list[str] | None = None) -> None:
             logger.warning(f"No data for {pair}, skipping")
             continue
         train_symbol(pair, df, MODEL_DIR, REPORT_DIR)
-        backtest_symbol(pair, df, REPORT_DIR, fees=CRYPTO_FEE_RATE)
+        backtest_symbol(pair, df, REPORT_DIR, fees=CRYPTO_FEE_RATE, max_hold=TARGET_HORIZON, stop_loss=0.08)
 
 
 if __name__ == "__main__":

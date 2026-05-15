@@ -31,7 +31,7 @@ class BacktestResult:
     initial_cash: float
 
 
-def generate_signals(model, df: pd.DataFrame, threshold: float = 0.55) -> pd.Series:
+def generate_signals(model, df: pd.DataFrame, threshold: float = 0.60) -> pd.Series:
     """
     Generate boolean entry signals from model probabilities.
 
@@ -45,7 +45,7 @@ def generate_signals(model, df: pd.DataFrame, threshold: float = 0.55) -> pd.Ser
     return pd.Series(proba > threshold, index=df.index, name="signal")
 
 
-def walk_forward_signals(df: pd.DataFrame, n_folds: int = 5, min_train_frac: float = 0.5, threshold: float = 0.55) -> pd.Series:
+def walk_forward_signals(df: pd.DataFrame, n_folds: int = 5, min_train_frac: float = 0.5, threshold: float = 0.60) -> pd.Series:
     """
     Generate out-of-sample signals using the same walk-forward scheme as training.
     This is the honest version for backtest evaluation — no lookahead.
@@ -69,13 +69,13 @@ def walk_forward_signals(df: pd.DataFrame, n_folds: int = 5, min_train_frac: flo
     return signal
 
 
-def run_backtest(symbol: str, df: pd.DataFrame, signals: pd.Series, initial_cash: float = 10_000.0, fees: float = 0.001, slippage: float = 0.0005) -> BacktestResult:
+def run_backtest(symbol: str, df: pd.DataFrame, signals: pd.Series, initial_cash: float = 10_000.0, fees: float = 0.001, slippage: float = 0.0005, max_hold: int | None = None, stop_loss: float | None = None) -> BacktestResult:
     """
     Run vectorbt backtest on a long-only signal series.
 
     `fees` and `slippage` are fractional (0.001 = 0.1%).
-    Stocks via Alpaca are commission-free, but slippage is realistic.
-    Crypto on Coinbase is ~0.4% taker — adjust per-asset.
+    `max_hold`: optional cap on holding period in bars (forces exit after N days).
+    `stop_loss`: optional fractional stop (e.g. 0.05 = 5% stop-loss).
     """
     df = df.loc[signals.index].copy()
     close = df["close"]
@@ -84,7 +84,12 @@ def run_backtest(symbol: str, df: pd.DataFrame, signals: pd.Series, initial_cash
     entries = signals & ~signals.shift(1).fillna(False)
     exits = ~signals & signals.shift(1).fillna(False)
 
-    pf = vbt.Portfolio.from_signals(
+    # Add a time-based exit: force exit `max_hold` bars after every entry
+    if max_hold is not None and max_hold > 0:
+        time_exit = entries.shift(max_hold).fillna(False)
+        exits = exits | time_exit
+
+    pf_kwargs = dict(
         close=close,
         entries=entries,
         exits=exits,
@@ -93,6 +98,9 @@ def run_backtest(symbol: str, df: pd.DataFrame, signals: pd.Series, initial_cash
         slippage=slippage,
         freq="1D",
     )
+    if stop_loss is not None:
+        pf_kwargs["sl_stop"] = stop_loss
+    pf = vbt.Portfolio.from_signals(**pf_kwargs)
 
     stats = pf.stats()
     n_trades = int(stats.get("Total Trades", 0))
@@ -116,11 +124,11 @@ def save_backtest(result: BacktestResult, path: str) -> None:
         json.dump(asdict(result), f, indent=2, default=str)
 
 
-def backtest_symbol(symbol: str, df: pd.DataFrame, report_dir: str, fees: float = 0.001) -> BacktestResult:
+def backtest_symbol(symbol: str, df: pd.DataFrame, report_dir: str, fees: float = 0.001, threshold: float = 0.60, max_hold: int | None = None, stop_loss: float | None = 0.05) -> BacktestResult:
     """Run walk-forward signals + backtest + persist report."""
     logger.info(f"Backtesting {symbol}")
-    signals = walk_forward_signals(df)
-    result = run_backtest(symbol, df, signals, fees=fees)
+    signals = walk_forward_signals(df, threshold=threshold)
+    result = run_backtest(symbol, df, signals, fees=fees, max_hold=max_hold, stop_loss=stop_loss)
     save_backtest(result, os.path.join(report_dir, f"{symbol}_backtest.json"))
     logger.info(
         f"{symbol}: trades={result.n_trades} return={result.total_return:.2%} "

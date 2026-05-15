@@ -10,13 +10,19 @@ import time
 import pandas as pd
 import requests
 from loguru import logger
-from common.features import add_features
+from common.features import add_features, add_target
 from common.storage import save_parquet, load_parquet
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results", "crypto", "data")
 
 # Starter universe — major liquid pairs on Coinbase
 DEFAULT_PAIRS = ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "ADA-USD"]
+
+# Target: predict whether close in 5 days will be >2.5% higher.
+# Coinbase fees ≈ 0.4% × 2 = 0.8% round-trip, so we need a meaningful
+# move to make money. Longer horizon also cuts trade frequency.
+TARGET_HORIZON = 5
+TARGET_THRESHOLD = 0.025
 
 # Coinbase public market data endpoint (Exchange/legacy public API, no auth needed)
 COINBASE_PUBLIC_URL = "https://api.exchange.coinbase.com"
@@ -75,6 +81,7 @@ def fetch_and_store(symbol: str, days: int = 365 * 5) -> pd.DataFrame:
     if df.empty:
         return df
     df = add_features(df)
+    df = add_target(df, horizon=TARGET_HORIZON, threshold=TARGET_THRESHOLD)
     path = os.path.join(DATA_DIR, f"{symbol}.parquet")
     save_parquet(df, path)
     logger.info(f"Saved {symbol}: {len(df)} rows -> {path}")
