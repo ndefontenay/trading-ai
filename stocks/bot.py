@@ -75,11 +75,11 @@ def _position_size(portfolio_value: float, entry_price: float) -> int:
     return max(min(risk_based_qty, alloc_cap_qty), 0)
 
 
-def run_cycle() -> None:
-    logger.info("=== Stocks trading cycle ===")
+def run_cycle(dry_run: bool = False) -> None:
+    logger.info(f"=== Stocks trading cycle (dry_run={dry_run}) ===")
     broker = AlpacaBroker()
 
-    if not broker.is_market_open():
+    if not broker.is_market_open() and not dry_run:
         logger.info("Market closed, skipping cycle")
         return
 
@@ -101,6 +101,9 @@ def run_cycle() -> None:
         if qty <= 0:
             logger.warning(f"{sig.symbol}: position size 0, skipping")
             continue
+        if dry_run:
+            logger.info(f"[DRY RUN] would BUY {sig.symbol} qty={qty} @~${sig.last_close:.2f} proba={sig.proba:.3f}")
+            continue
         try:
             order_id = broker.submit_bracket_buy(
                 sig.symbol, qty,
@@ -118,10 +121,11 @@ def run_cycle() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
+    parser.add_argument("--dry-run", action="store_true", help="Don't place orders; just print what would happen")
     args = parser.parse_args()
 
-    if args.once:
-        run_cycle()
+    if args.once or args.dry_run:
+        run_cycle(dry_run=args.dry_run)
         return
 
     logger.info("Stocks bot starting (scheduled mode)")
