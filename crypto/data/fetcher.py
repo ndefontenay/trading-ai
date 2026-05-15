@@ -1,9 +1,8 @@
 """
-Crypto data fetcher — pulls historical OHLCV from Coinbase Advanced.
+Crypto data fetcher — pulls historical OHLCV from Kraken public API.
 
-Public candle endpoints don't require auth, so we can fetch data without keys.
-Auth keys are only needed in Phase 3 when we go live; paper trading is simulated
-locally because Coinbase deprecated their sandbox.
+Kraken Pro has 0.16% taker fees (vs Coinbase 0.4%) and supports paper trading
+via their demo environment. Public OHLC endpoint requires no auth.
 """
 import os
 import time
@@ -15,68 +14,87 @@ from common.storage import save_parquet, load_parquet
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results", "crypto", "data")
 
-# Starter universe — major liquid pairs on Coinbase
-DEFAULT_PAIRS = ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "ADA-USD"]
+# Display name -> Kraken pair code. Kraken uses XBT for Bitcoin and prefixes
+# legacy pairs with X/Z. We store data under the friendly display name.
+KRAKEN_PAIRS = {
+    "BTC-USD": "XBTUSD",
+    "ETH-USD": "ETHUSD",
+    "SOL-USD": "SOLUSD",
+    "XRP-USD": "XRPUSD",
+    "ADA-USD": "ADAUSD",
+}
+DEFAULT_PAIRS = list(KRAKEN_PAIRS.keys())
 
-# Target: predict whether close in 5 days will be >2.5% higher.
-# Coinbase fees ≈ 0.4% × 2 = 0.8% round-trip, so we need a meaningful
-# move to make money. Longer horizon also cuts trade frequency.
-TARGET_HORIZON = 5
-TARGET_THRESHOLD = 0.025
+KRAKEN_PUBLIC_URL = "https://api.kraken.com/0/public/OHLC"
+INTERVAL_DAILY_MIN = 1440  # daily in minutes
 
-# Coinbase public market data endpoint (Exchange/legacy public API, no auth needed)
-COINBASE_PUBLIC_URL = "https://api.exchange.coinbase.com"
-
-# Granularity in seconds
-GRANULARITY_DAILY = 86400
-MAX_CANDLES_PER_REQUEST = 300  # Coinbase limit
+# Target: predict whether close in 10 days will be >4% higher.
+# Kraken Pro fees ≈ 0.16% × 2 = 0.32% round-trip, so 4% target leaves
+# plenty of room. Longer horizon also cuts trade frequency further.
+TARGET_HORIZON = 10
+TARGET_THRESHOLD = 0.04
 
 
-def fetch_pair(symbol: str, days: int = 365 * 5, granularity: int = GRANULARITY_DAILY) -> pd.DataFrame:
+def fetch_pair(symbol: str, days: int = 365 * 5, interval: int = INTERVAL_DAILY_MIN) -> pd.DataFrame:
     """
-    Fetch OHLCV candles for one pair.
-    Coinbase returns max 300 candles per request, so we paginate backwards.
+    Fetch OHLCV candles for one pair via Kraken's public OHLC endpoint.
+
+    Kraken's `since` param is a timestamp; the response returns up to 720
+    candles from that point forward. For daily data, 720 days = ~2 years,
+    so we paginate to cover the full lookback.
     """
-    logger.info(f"Fetching {symbol} ({days} days, granularity={granularity}s)")
-    end = pd.Timestamp.utcnow().floor("D")
-    start_target = end - pd.Timedelta(days=days)
+    logger.info(f"Fetching {symbol} ({days} days, interval={interval}min)")
+    kraken_pair = KRAKEN_PAIRS.get(symbol, symbol)
+    seconds_per_candle = interval * 60
 
-    all_candles: list = []
-    cursor_end = end
-    step = pd.Timedelta(seconds=granularity * MAX_CANDLES_PER_REQUEST)
+    end_ts = int(pd.Timestamp.utcnow().timestamp())
+    since = end_ts - days * 86400
 
-    while cursor_end > start_target:
-        cursor_start = max(cursor_end - step, start_target)
-        params = {
-            "start": cursor_start.isoformat(),
-            "end": cursor_end.isoformat(),
-            "granularity": granularity,
-        }
-        resp = requests.get(f"{COINBASE_PUBLIC_URL}/products/{symbol}/candles", params=params, timeout=15)
+    all_rows: list = []
+    cursor = since
+    pair_key: str | None = None
+
+    while cursor < end_ts:
+        resp = requests.get(KRAKEN_PUBLIC_URL, params={"pair": kraken_pair, "interval": interval, "since": cursor}, timeout=15)
         if resp.status_code != 200:
-            logger.error(f"Coinbase error for {symbol}: {resp.status_code} {resp.text}")
+            logger.error(f"Kraken HTTP {resp.status_code} for {symbol}: {resp.text}")
             break
-        batch = resp.json()
-        if not batch:
+        payload = resp.json()
+        if payload.get("error"):
+            logger.error(f"Kraken error for {symbol}: {payload['error']}")
             break
-        all_candles.extend(batch)
-        cursor_end = cursor_start
-        time.sleep(0.25)  # be polite to public endpoint
 
-    if not all_candles:
+        result = payload["result"]
+        # Kraken returns the pair under its canonical key (e.g. XXBTZUSD for XBTUSD)
+        if pair_key is None:
+            pair_key = next(k for k in result.keys() if k != "last")
+        rows = result.get(pair_key, [])
+        if not rows:
+            break
+
+        all_rows.extend(rows)
+        new_cursor = int(result["last"])
+        if new_cursor <= cursor:
+            break
+        cursor = new_cursor
+        time.sleep(0.5)  # Kraken rate limits public endpoint
+
+    if not all_rows:
         logger.warning(f"No candles for {symbol}")
         return pd.DataFrame()
 
-    # Coinbase format: [time, low, high, open, close, volume]
-    df = pd.DataFrame(all_candles, columns=["time", "low", "high", "open", "close", "volume"])
-    df["time"] = pd.to_datetime(df["time"], unit="s")
+    # Kraken row format: [time, open, high, low, close, vwap, volume, count]
+    df = pd.DataFrame(all_rows, columns=["time", "open", "high", "low", "close", "vwap", "volume", "count"])
+    df["time"] = pd.to_datetime(df["time"].astype(int), unit="s")
     df = df.set_index("time").sort_index()
     df = df[~df.index.duplicated(keep="first")]
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = pd.to_numeric(df[col])
     return df[["open", "high", "low", "close", "volume"]]
 
 
 def fetch_and_store(symbol: str, days: int = 365 * 5) -> pd.DataFrame:
-    """Fetch a pair, add features, save to Parquet."""
+    """Fetch a pair, add features and target, save to Parquet."""
     df = fetch_pair(symbol, days=days)
     if df.empty:
         return df

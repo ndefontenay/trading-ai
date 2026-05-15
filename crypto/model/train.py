@@ -13,8 +13,8 @@ from crypto.data.fetcher import DEFAULT_PAIRS, load_pair, TARGET_HORIZON
 MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results", "crypto", "models")
 REPORT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results", "crypto", "reports")
 
-# Coinbase taker fee ≈ 0.4% — realistic for a small account
-CRYPTO_FEE_RATE = 0.004
+# Kraken Pro taker fee ≈ 0.16% — meaningfully cheaper than Coinbase
+CRYPTO_FEE_RATE = 0.0016
 
 
 def train_all(pairs: list[str] | None = None) -> None:
