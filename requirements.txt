@@ -14,6 +14,7 @@ joblib==1.4.2
 
 # Backtesting
 vectorbt==0.26.2
+plotly==5.24.1   # vectorbt 0.26.2 incompatible with plotly>=6
 
 # Broker APIs
 alpaca-py==0.28.1
