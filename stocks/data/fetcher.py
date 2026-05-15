@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import yfinance as yf
 from loguru import logger
-from common.features import add_features, add_target
+from common.features import add_features, add_target_triple_barrier
 from common.storage import save_parquet, load_parquet
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results", "stocks", "data")
@@ -13,11 +13,11 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.
 # Starter universe — adjust as needed
 DEFAULT_TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "WMT"]
 
-# Target: predict whether close in 3 days will be >1% higher.
-# Alpaca is commission-free so threshold can be tight; 3-day horizon
-# reduces noise vs. next-day direction.
+# Triple-barrier target: within 3 trading days, did price hit +1.5% (win)
+# before -3% (stop) or time-out? Matches actual trade execution semantics.
 TARGET_HORIZON = 3
-TARGET_THRESHOLD = 0.01
+TARGET_UPPER = 0.015   # take-profit barrier
+TARGET_LOWER = 0.03    # stop-loss barrier (matches STOP_LOSS_PCT)
 
 
 def fetch_ticker(ticker: str, period: str = "5y", interval: str = "1d") -> pd.DataFrame:
@@ -40,7 +40,7 @@ def fetch_and_store(ticker: str, period: str = "5y") -> pd.DataFrame:
     if df.empty:
         return df
     df = add_features(df)
-    df = add_target(df, horizon=TARGET_HORIZON, threshold=TARGET_THRESHOLD)
+    df = add_target_triple_barrier(df, horizon=TARGET_HORIZON, upper=TARGET_UPPER, lower=TARGET_LOWER)
     path = os.path.join(DATA_DIR, f"{ticker}.parquet")
     save_parquet(df, path)
     logger.info(f"Saved {ticker}: {len(df)} rows -> {path}")

@@ -59,23 +59,60 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_target(df: pd.DataFrame, horizon: int, threshold: float) -> pd.DataFrame:
-    """
-    Add a binary target: 1 if the forward `horizon`-day return exceeds `threshold`.
-
-    Examples:
-      - Stocks: horizon=3, threshold=0.01  (predict +1% over 3 days)
-      - Crypto: horizon=5, threshold=0.02  (predict +2% over 5 days)
-
-    Larger threshold → fewer positive examples, but each one is a meaningful
-    move that can overcome trading friction. The target is forward-looking,
-    so future rows will be NaN; training will drop them.
-    """
+    """[Legacy fixed-horizon label] 1 if forward return > threshold else 0."""
     df = df.copy()
     forward_return = df["close"].shift(-horizon) / df["close"] - 1.0
     df["target"] = (forward_return > threshold).astype(int)
-    # Mark the last `horizon` rows as NaN so they don't enter training
     df.loc[df.index[-horizon:], "target"] = np.nan
     df["forward_return"] = forward_return
+    return df
+
+
+def add_target_triple_barrier(df: pd.DataFrame, horizon: int, upper: float, lower: float) -> pd.DataFrame:
+    """
+    De Prado-style triple-barrier label.
+
+    For each row, walk forward up to `horizon` bars. Label = 1 iff the
+    `(1 + upper)` barrier is hit BEFORE the `(1 - lower)` stop and before the
+    horizon expires. Stop-out and time-out both label as 0.
+
+    Why it's better than fixed-horizon: the label matches how the trade
+    actually executes (entry → stop, target, or time exit). Fixed-horizon
+    rewards moves the strategy never captures (drawdown beyond stop, then
+    recovery by day N).
+    """
+    df = df.copy()
+    close = df["close"].values
+    n = len(close)
+    labels = np.full(n, np.nan)
+    realized_return = np.full(n, np.nan)
+    exit_bar = np.full(n, np.nan)
+
+    for i in range(n - horizon):
+        entry = close[i]
+        up_px = entry * (1 + upper)
+        dn_px = entry * (1 - lower)
+        label = 0
+        for j in range(1, horizon + 1):
+            px = close[i + j]
+            if px >= up_px:
+                label = 1
+                realized_return[i] = (up_px / entry) - 1.0
+                exit_bar[i] = j
+                break
+            if px <= dn_px:
+                realized_return[i] = (dn_px / entry) - 1.0
+                exit_bar[i] = j
+                break
+        else:
+            # time-out
+            realized_return[i] = (close[i + horizon] / entry) - 1.0
+            exit_bar[i] = horizon
+        labels[i] = label
+
+    df["target"] = labels
+    df["realized_return"] = realized_return
+    df["exit_bar"] = exit_bar
     return df
 
 

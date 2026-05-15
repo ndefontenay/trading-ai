@@ -9,7 +9,7 @@ import time
 import pandas as pd
 import requests
 from loguru import logger
-from common.features import add_features, add_target
+from common.features import add_features, add_target_triple_barrier
 from common.storage import save_parquet, load_parquet
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results", "crypto", "data")
@@ -28,11 +28,11 @@ DEFAULT_PAIRS = list(KRAKEN_PAIRS.keys())
 KRAKEN_PUBLIC_URL = "https://api.kraken.com/0/public/OHLC"
 INTERVAL_DAILY_MIN = 1440  # daily in minutes
 
-# Target: predict whether close in 10 days will be >4% higher.
-# Kraken Pro fees ≈ 0.16% × 2 = 0.32% round-trip, so 4% target leaves
-# plenty of room. Longer horizon also cuts trade frequency further.
+# Triple-barrier target: within 10 days, did price hit +5% (win) before
+# -8% (stop)? Mirrors actual trade execution under crypto stop-loss.
 TARGET_HORIZON = 10
-TARGET_THRESHOLD = 0.04
+TARGET_UPPER = 0.05
+TARGET_LOWER = 0.08
 
 
 def fetch_pair(symbol: str, days: int = 365 * 5, interval: int = INTERVAL_DAILY_MIN) -> pd.DataFrame:
@@ -99,7 +99,7 @@ def fetch_and_store(symbol: str, days: int = 365 * 5) -> pd.DataFrame:
     if df.empty:
         return df
     df = add_features(df)
-    df = add_target(df, horizon=TARGET_HORIZON, threshold=TARGET_THRESHOLD)
+    df = add_target_triple_barrier(df, horizon=TARGET_HORIZON, upper=TARGET_UPPER, lower=TARGET_LOWER)
     path = os.path.join(DATA_DIR, f"{symbol}.parquet")
     save_parquet(df, path)
     logger.info(f"Saved {symbol}: {len(df)} rows -> {path}")

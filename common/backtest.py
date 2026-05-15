@@ -78,10 +78,10 @@ def generate_signals(model, df: pd.DataFrame, threshold: float = 0.60) -> pd.Ser
     return pd.Series(proba > threshold, index=df.index, name="signal")
 
 
-def walk_forward_signals(df: pd.DataFrame, n_folds: int = 5, min_train_frac: float = 0.5, threshold: float = 0.60) -> pd.Series:
+def walk_forward_signals(df: pd.DataFrame, n_folds: int = 5, min_train_frac: float = 0.5, threshold: float = 0.60, regime: pd.Series | None = None) -> pd.Series:
     """
-    Generate out-of-sample signals using the same walk-forward scheme as training.
-    This is the honest version for backtest evaluation — no lookahead.
+    Out-of-sample signal series using walk-forward training, optionally gated
+    by a regime series (True = risk-on, False = no entries that day).
     """
     from common.training import prepare_xy, _xgb_model
     X, y = prepare_xy(df)
@@ -99,6 +99,9 @@ def walk_forward_signals(df: pd.DataFrame, n_folds: int = 5, min_train_frac: flo
         proba_full.iloc[test_start:test_end] = p
 
     signal = (proba_full > threshold).fillna(False)
+    if regime is not None:
+        aligned = regime.reindex(signal.index).ffill().fillna(False).astype(bool)
+        signal = signal & aligned
     return signal
 
 
@@ -167,15 +170,59 @@ def save_backtest(result: BacktestResult, path: str) -> None:
         json.dump(asdict(result), f, indent=2, default=str)
 
 
-def backtest_symbol(symbol: str, df: pd.DataFrame, report_dir: str, fees: float = 0.001, threshold: float = 0.60, max_hold: int | None = None, stop_loss: float | None = 0.05) -> BacktestResult:
-    """Run walk-forward signals + backtest + persist report."""
+@dataclass
+class SplitBacktest:
+    """A symbol's backtest split into in-sample (selection) and OOS (evaluation)."""
+    symbol: str
+    selection: BacktestResult
+    evaluation: BacktestResult
+
+
+def backtest_symbol(
+    symbol: str, df: pd.DataFrame, report_dir: str,
+    fees: float = 0.001, threshold: float = 0.60,
+    max_hold: int | None = None, stop_loss: float | None = 0.05,
+    regime: pd.Series | None = None,
+    selection_frac: float = 0.60,
+) -> SplitBacktest:
+    """
+    Run walk-forward signals, split into selection (early 60%) and evaluation
+    (late 40%) windows, backtest each, persist a combined report.
+
+    The split is for HONEST universe selection: we pick names based on
+    `selection` numbers and judge live deployment by `evaluation` numbers.
+    """
     logger.info(f"Backtesting {symbol}")
-    signals = walk_forward_signals(df, threshold=threshold)
-    result = run_backtest(symbol, df, signals, fees=fees, max_hold=max_hold, stop_loss=stop_loss)
-    save_backtest(result, os.path.join(report_dir, f"{symbol}_backtest.json"))
+    signals = walk_forward_signals(df, threshold=threshold, regime=regime)
+    aligned_df = df.loc[signals.index]
+
+    split_idx = int(len(aligned_df) * selection_frac)
+    split_date = aligned_df.index[split_idx]
+
+    sel_signals = signals.loc[:split_date].iloc[:-1]
+    sel_df = aligned_df.loc[sel_signals.index]
+    sel_result = run_backtest(f"{symbol}_sel", sel_df, sel_signals, fees=fees, max_hold=max_hold, stop_loss=stop_loss)
+
+    eval_signals = signals.loc[split_date:]
+    eval_df = aligned_df.loc[eval_signals.index]
+    eval_result = run_backtest(f"{symbol}_eval", eval_df, eval_signals, fees=fees, max_hold=max_hold, stop_loss=stop_loss)
+
+    combined = SplitBacktest(symbol=symbol, selection=sel_result, evaluation=eval_result)
+    _save_split(combined, os.path.join(report_dir, f"{symbol}_backtest.json"))
     logger.info(
-        f"{symbol}: trades={result.n_trades} gross={result.total_return:.2%} "
-        f"net={result.after_tax_return:.2%} (tax ${result.total_taxes:,.0f}) "
-        f"sharpe={result.sharpe:.2f} dd={result.max_drawdown:.2%} win={result.win_rate:.2%}"
+        f"{symbol} SEL: trades={sel_result.n_trades} net={sel_result.after_tax_return:.2%} "
+        f"sharpe={sel_result.sharpe:.2f} | EVAL: trades={eval_result.n_trades} "
+        f"net={eval_result.after_tax_return:.2%} sharpe={eval_result.sharpe:.2f}"
     )
-    return result
+    return combined
+
+
+def _save_split(split: SplitBacktest, path: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    payload = {
+        "symbol": split.symbol,
+        "selection": asdict(split.selection),
+        "evaluation": asdict(split.evaluation),
+    }
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2, default=str)
