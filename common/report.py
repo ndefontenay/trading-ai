@@ -1,4 +1,4 @@
-"""Print a summary table of all training + split backtest reports."""
+"""Summary report of training + per-symbol split backtests."""
 import os
 import json
 import glob
@@ -14,23 +14,26 @@ def summarize(report_dir: str, label: str, universe_file: str | None = None) -> 
         data = json.load(open(universe_file))
         active = set(data.get("tickers") or data.get("pairs") or [])
 
+    pooled_path = os.path.join(report_dir, "pooled.json")
     print(f"\n=== {label} ===")
-    print(f"{'Symbol':<10} {'Acc':>6} {'AUC':>6}  || {'sel Trd':>7} {'sel Net':>9} {'sel Sh':>7}  || {'eval Trd':>8} {'eval Net':>9} {'eval Sh':>8} {'eval DD':>8}  Active")
-    print("-" * 115)
+    if os.path.exists(pooled_path):
+        p = json.load(open(pooled_path))
+        print(f"Pooled model: folds={p.get('n_folds', 0)} acc={p.get('mean_accuracy', 0):.3f} auc={p.get('mean_auc', 0):.3f} features={len(p.get('feature_cols', []))}")
 
-    symbols = sorted({os.path.basename(p).replace("_backtest.json", "").replace(".json", "")
-                      for p in glob.glob(os.path.join(report_dir, "*.json"))})
+    print(f"{'Symbol':<10} || {'sel Trd':>7} {'sel Net':>9} {'sel Sh':>7}  || {'eval Trd':>8} {'eval Net':>9} {'eval Sh':>8} {'eval DD':>8}  Active")
+    print("-" * 97)
+
+    symbols = sorted({os.path.basename(p).replace("_backtest.json", "")
+                      for p in glob.glob(os.path.join(report_dir, "*_backtest.json"))})
 
     for sym in symbols:
-        train_path = os.path.join(report_dir, f"{sym}.json")
         bt_path = os.path.join(report_dir, f"{sym}_backtest.json")
-        train = json.load(open(train_path)) if os.path.exists(train_path) else {}
         bt = json.load(open(bt_path)) if os.path.exists(bt_path) else {}
         sel = bt.get("selection", {})
         evl = bt.get("evaluation", {})
 
         active_marker = "*" if sym in active else " "
-        print(f"{sym:<10} {train.get('mean_accuracy', 0):>6.3f} {train.get('mean_auc', 0):>6.3f}  || "
+        print(f"{sym:<10} || "
               f"{sel.get('n_trades', 0):>7d} {sel.get('after_tax_return', 0):>8.2%} {sel.get('sharpe', 0):>7.2f}  || "
               f"{evl.get('n_trades', 0):>8d} {evl.get('after_tax_return', 0):>8.2%} {evl.get('sharpe', 0):>8.2f} {evl.get('max_drawdown', 0):>7.2%}   {active_marker}")
 

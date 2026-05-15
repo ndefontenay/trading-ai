@@ -16,7 +16,7 @@ from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score, roc_auc_score
 from loguru import logger
 
-from common.features import feature_columns
+from common.features import feature_columns_in
 
 
 @dataclass
@@ -57,7 +57,7 @@ def _xgb_model() -> XGBClassifier:
 
 def prepare_xy(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     """Drop rows with NaN features/target and return X, y."""
-    cols = feature_columns()
+    cols = feature_columns_in(df)
     df = df.dropna(subset=cols + ["target"]).copy()
     return df[cols], df["target"].astype(int)
 

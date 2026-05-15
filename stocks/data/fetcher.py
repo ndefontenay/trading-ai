@@ -6,6 +6,7 @@ import pandas as pd
 import yfinance as yf
 from loguru import logger
 from common.features import add_features, add_target_triple_barrier
+from common.market_features import fetch_market_context, add_market_features
 from common.storage import save_parquet, load_parquet
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results", "stocks", "data")
@@ -34,12 +35,14 @@ def fetch_ticker(ticker: str, period: str = "5y", interval: str = "1d") -> pd.Da
     return df
 
 
-def fetch_and_store(ticker: str, period: str = "5y") -> pd.DataFrame:
+def fetch_and_store(ticker: str, period: str = "5y", market_ctx: dict | None = None) -> pd.DataFrame:
     """Fetch a ticker, add features, save to Parquet, return the DataFrame."""
     df = fetch_ticker(ticker, period=period)
     if df.empty:
         return df
     df = add_features(df)
+    if market_ctx is not None:
+        df = add_market_features(df, ticker, market_ctx)
     df = add_target_triple_barrier(df, horizon=TARGET_HORIZON, upper=TARGET_UPPER, lower=TARGET_LOWER)
     path = os.path.join(DATA_DIR, f"{ticker}.parquet")
     save_parquet(df, path)
@@ -53,9 +56,10 @@ def load_ticker(ticker: str) -> pd.DataFrame:
 
 
 def fetch_universe(tickers: list[str] | None = None, period: str = "5y") -> dict[str, pd.DataFrame]:
-    """Fetch and store the full universe."""
+    """Fetch the universe, including shared market context (SPY, VIX, sectors)."""
     tickers = tickers or DEFAULT_TICKERS
-    return {t: fetch_and_store(t, period=period) for t in tickers}
+    ctx = fetch_market_context(period=period)
+    return {t: fetch_and_store(t, period=period, market_ctx=ctx) for t in tickers}
 
 
 if __name__ == "__main__":

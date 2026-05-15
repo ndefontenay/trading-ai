@@ -13,7 +13,7 @@ import pandas as pd
 import vectorbt as vbt
 from loguru import logger
 
-from common.features import feature_columns
+from common.features import feature_columns_in
 from common.training import load_model
 from common.config import TAX_RATE
 
@@ -72,7 +72,7 @@ def generate_signals(model, df: pd.DataFrame, threshold: float = 0.60) -> pd.Ser
     the backtest window. For honest evaluation, use walk-forward predictions
     instead of a single model — see `walk_forward_signals` below.
     """
-    cols = feature_columns()
+    cols = feature_columns_in(df)
     df = df.dropna(subset=cols).copy()
     proba = model.predict_proba(df[cols])[:, 1]
     return pd.Series(proba > threshold, index=df.index, name="signal")

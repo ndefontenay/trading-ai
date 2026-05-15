@@ -116,8 +116,8 @@ def add_target_triple_barrier(df: pd.DataFrame, horizon: int, upper: float, lowe
     return df
 
 
-def feature_columns() -> list[str]:
-    """Columns to feed the model — excludes raw OHLCV and the target."""
+def base_feature_columns() -> list[str]:
+    """Per-asset technical indicators (no cross-asset context)."""
     return [
         "return_1d", "return_5d", "log_return_1d",
         "sma_10", "sma_50", "ema_12", "ema_26",
@@ -127,3 +127,19 @@ def feature_columns() -> list[str]:
         "atr_14",
         "volume_sma_20", "volume_ratio",
     ]
+
+
+def feature_columns(include_market: bool = True) -> list[str]:
+    """Full feature list. With market context for stocks; without for crypto."""
+    cols = base_feature_columns()
+    if include_market:
+        from common.market_features import market_feature_columns
+        cols = cols + market_feature_columns()
+    return cols
+
+
+def feature_columns_in(df: pd.DataFrame) -> list[str]:
+    """Return all known feature columns present in this DataFrame."""
+    from common.market_features import market_feature_columns
+    candidates = base_feature_columns() + market_feature_columns()
+    return [c for c in candidates if c in df.columns]
