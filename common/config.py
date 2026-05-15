@@ -8,10 +8,12 @@ ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 ALPACA_PAPER = os.getenv("ALPACA_PAPER", "true").lower() == "true"
 
-# Binance
-BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
-BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
-BINANCE_TESTNET = os.getenv("BINANCE_TESTNET", "true").lower() == "true"
+# Coinbase Advanced
+# Public market data needs no auth; keys only required for Phase 5 live trading.
+COINBASE_API_KEY = os.getenv("COINBASE_API_KEY")
+COINBASE_API_SECRET = os.getenv("COINBASE_API_SECRET")
+# Crypto paper trading is simulated locally (Coinbase has no sandbox).
+CRYPTO_PAPER = os.getenv("CRYPTO_PAPER", "true").lower() == "true"
 
 # Shared trading params
 RISK_PER_TRADE = 0.02       # 2% of capital per trade

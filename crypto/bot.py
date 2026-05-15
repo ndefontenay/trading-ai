@@ -14,7 +14,7 @@ setup_logger("crypto", CRYPTO_RESULTS_DIR)
 def run_cycle():
     logger.info("Starting crypto trading cycle")
     # Phase 2: fetch latest data, generate signal
-    # Phase 3: submit order to Binance testnet
+    # Phase 3: simulate order locally (paper) or submit to Coinbase (live)
     logger.info("Crypto cycle complete")
 
 
