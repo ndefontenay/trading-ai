@@ -20,6 +20,13 @@ RISK_PER_TRADE = 0.02       # 2% of capital per trade
 MAX_OPEN_POSITIONS = 5
 STOP_LOSS_PCT = 0.03        # 3% stop-loss
 
+# Tax modeling for after-tax backtest reporting.
+# Our hold times (3d stocks, 10d crypto) all trigger SHORT-TERM capital gains,
+# taxed at ordinary income rate. Default 30% = ~24% federal + ~6% state.
+# Adjust to match your bracket. Set to 0 if trading in a tax-advantaged account.
+# Note: wash sale rule is NOT modeled — assumed away (e.g. trading in an IRA).
+TAX_RATE = float(os.getenv("TAX_RATE", "0.30"))
+
 # Paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESULTS_DIR = os.path.join(BASE_DIR, "results")

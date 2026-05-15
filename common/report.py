@@ -10,8 +10,8 @@ def summarize(report_dir: str, label: str) -> None:
         return
 
     print(f"\n=== {label} ===")
-    print(f"{'Symbol':<10} {'Acc':>6} {'AUC':>6} {'Trades':>7} {'Return':>9} {'Sharpe':>7} {'MaxDD':>8} {'Win%':>7}")
-    print("-" * 70)
+    print(f"{'Symbol':<10} {'Acc':>6} {'AUC':>6} {'Trades':>7} {'Gross':>9} {'Tax$':>9} {'Net':>9} {'Sharpe':>7} {'MaxDD':>8} {'Win%':>7}")
+    print("-" * 92)
 
     symbols = sorted({os.path.basename(p).replace("_backtest.json", "").replace(".json", "")
                       for p in glob.glob(os.path.join(report_dir, "*.json"))})
@@ -24,6 +24,7 @@ def summarize(report_dir: str, label: str) -> None:
 
         print(f"{sym:<10} {train.get('mean_accuracy', 0):>6.3f} {train.get('mean_auc', 0):>6.3f} "
               f"{bt.get('n_trades', 0):>7d} {bt.get('total_return', 0):>8.2%} "
+              f"${bt.get('total_taxes', 0):>7,.0f} {bt.get('after_tax_return', 0):>8.2%} "
               f"{bt.get('sharpe', 0):>7.2f} {bt.get('max_drawdown', 0):>7.2%} "
               f"{bt.get('win_rate', 0):>6.2%}")
 

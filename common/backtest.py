@@ -15,6 +15,33 @@ from loguru import logger
 
 from common.features import feature_columns
 from common.training import load_model
+from common.config import TAX_RATE
+
+
+def compute_taxes(trades_df: pd.DataFrame, tax_rate: float) -> float:
+    """
+    Sum short-term capital gains tax across years.
+
+    Each trade is realized on its exit date. Gains and losses within the same
+    calendar year net out; net losses carry forward to offset future years
+    (simplified — no $3k/year ordinary-income offset, no wash sales).
+    """
+    if trades_df.empty or tax_rate <= 0:
+        return 0.0
+    df = trades_df[["Exit Timestamp", "PnL"]].copy()
+    df["year"] = pd.to_datetime(df["Exit Timestamp"]).dt.year
+    annual = df.groupby("year")["PnL"].sum().sort_index()
+
+    taxes = 0.0
+    carry = 0.0
+    for pnl in annual.values:
+        taxable = pnl + carry
+        if taxable > 0:
+            taxes += taxable * tax_rate
+            carry = 0.0
+        else:
+            carry = taxable
+    return float(taxes)
 
 
 @dataclass
@@ -29,6 +56,12 @@ class BacktestResult:
     win_rate: float
     final_value: float
     initial_cash: float
+    # After-tax view (short-term capital gains at TAX_RATE applied annually,
+    # with losses carried forward to the next year)
+    tax_rate: float = 0.0
+    total_taxes: float = 0.0
+    after_tax_return: float = 0.0
+    after_tax_final_value: float = 0.0
 
 
 def generate_signals(model, df: pd.DataFrame, threshold: float = 0.60) -> pd.Series:
@@ -69,7 +102,7 @@ def walk_forward_signals(df: pd.DataFrame, n_folds: int = 5, min_train_frac: flo
     return signal
 
 
-def run_backtest(symbol: str, df: pd.DataFrame, signals: pd.Series, initial_cash: float = 10_000.0, fees: float = 0.001, slippage: float = 0.0005, max_hold: int | None = None, stop_loss: float | None = None) -> BacktestResult:
+def run_backtest(symbol: str, df: pd.DataFrame, signals: pd.Series, initial_cash: float = 10_000.0, fees: float = 0.001, slippage: float = 0.0005, max_hold: int | None = None, stop_loss: float | None = None, tax_rate: float = TAX_RATE) -> BacktestResult:
     """
     Run vectorbt backtest on a long-only signal series.
 
@@ -104,6 +137,12 @@ def run_backtest(symbol: str, df: pd.DataFrame, signals: pd.Series, initial_cash
 
     stats = pf.stats()
     n_trades = int(stats.get("Total Trades", 0))
+    final_value = float(pf.value().iloc[-1])
+
+    taxes = compute_taxes(pf.trades.records_readable, tax_rate) if n_trades > 0 else 0.0
+    after_tax_final = final_value - taxes
+    after_tax_return = (after_tax_final - initial_cash) / initial_cash
+
     return BacktestResult(
         symbol=symbol,
         start=str(close.index[0]),
@@ -113,8 +152,12 @@ def run_backtest(symbol: str, df: pd.DataFrame, signals: pd.Series, initial_cash
         sharpe=float(stats.get("Sharpe Ratio", 0.0)) if not pd.isna(stats.get("Sharpe Ratio", 0.0)) else 0.0,
         max_drawdown=float(stats.get("Max Drawdown [%]", 0.0)) / 100.0,
         win_rate=float(stats.get("Win Rate [%]", 0.0)) / 100.0 if n_trades > 0 else 0.0,
-        final_value=float(pf.value().iloc[-1]),
+        final_value=final_value,
         initial_cash=initial_cash,
+        tax_rate=tax_rate,
+        total_taxes=taxes,
+        after_tax_return=after_tax_return,
+        after_tax_final_value=after_tax_final,
     )
 
 
@@ -131,7 +174,8 @@ def backtest_symbol(symbol: str, df: pd.DataFrame, report_dir: str, fees: float 
     result = run_backtest(symbol, df, signals, fees=fees, max_hold=max_hold, stop_loss=stop_loss)
     save_backtest(result, os.path.join(report_dir, f"{symbol}_backtest.json"))
     logger.info(
-        f"{symbol}: trades={result.n_trades} return={result.total_return:.2%} "
+        f"{symbol}: trades={result.n_trades} gross={result.total_return:.2%} "
+        f"net={result.after_tax_return:.2%} (tax ${result.total_taxes:,.0f}) "
         f"sharpe={result.sharpe:.2f} dd={result.max_drawdown:.2%} win={result.win_rate:.2%}"
     )
     return result
