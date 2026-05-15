@@ -1,0 +1,32 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
+
+# Results & data (can be large)
+results/
+*.parquet
+*.csv
+*.db
+
+# Models (regenerate from training)
+*.pkl
+*.joblib
+*.json.model
+
+# IDE
+.vscode/
+.idea/
+*.swp
